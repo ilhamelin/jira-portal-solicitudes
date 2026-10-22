@@ -3,6 +3,8 @@ import type {
   Adjunto,
   AuthResponse,
   BulkSyncResponse,
+  Comentario,
+  ComentarioCreateInput,
   DashboardMetrics,
   Solicitud,
   SolicitudCreateInput,
@@ -31,6 +33,7 @@ async function request<T>(
   options: RequestInit = {},
   authenticated = true,
   responseType: "json" | "blob" = "json",
+  onResponse?: (response: Response) => void,
 ): Promise<T> {
   const token = authenticated ? getToken() : null;
   const headers = new Headers(options.headers);
@@ -99,10 +102,32 @@ async function request<T>(
       "El servidor devolvió una respuesta inesperada.",
       response.status,
     );
+  onResponse?.(response);
   return body as T;
 }
 
 export const api = {
+  getComentarios: async (solicitudId: string, signal?: AbortSignal) => {
+    let syncFailed = false;
+    const items = await request<Comentario[]>(
+      `/solicitudes/${encodeURIComponent(solicitudId)}/comentarios`,
+      { signal },
+      true,
+      "json",
+      (response) => {
+        syncFailed = response.headers.get("X-Jira-Comments-Sync") === "failed";
+      },
+    );
+    return { items, syncFailed };
+  },
+  crearComentario: (solicitudId: string, input: ComentarioCreateInput) =>
+    request<Comentario>(
+      `/solicitudes/${encodeURIComponent(solicitudId)}/comentarios`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    ),
   uploadAdjunto: (solicitudId: string, file: File) => {
     const body = new FormData();
     body.append("file", file);

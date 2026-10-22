@@ -1,3 +1,4 @@
+import { ComentariosSection } from "../components/solicitudes/ComentariosSection";
 import { AdjuntosList } from "../components/solicitudes/AdjuntosList";
 import { useEffect, useState } from "react";
 import {
@@ -154,6 +155,12 @@ export function DetalleSolicitudPage() {
         </div>
       </div>
       <WorkflowStepper estado={item.estado_negocio} />
+      <ComentariosSection
+        key={item.id}
+        solicitudId={item.id}
+        revision={revision}
+        hasJiraTicket={Boolean(key)}
+      />
       <div className="detail-layout">
         <section
           className="panel description-panel"

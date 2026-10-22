@@ -98,3 +98,17 @@ export interface Adjunto {
   jira_attachment_id: string | null;
   created_at: string;
 }
+
+export interface Comentario {
+  id: string;
+  solicitud_id: string;
+  autor_nombre: string;
+  origen: "portal" | "jira";
+  contenido: string;
+  jira_comment_id: string | null;
+  created_at: string;
+}
+
+export interface ComentarioCreateInput {
+  contenido: string;
+}

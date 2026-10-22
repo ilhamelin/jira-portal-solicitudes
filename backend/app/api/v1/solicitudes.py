@@ -9,11 +9,12 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import selectinload
 
-from ...models import IntentoIntegracion, JiraIntegracion, Solicitud, Usuario, SolicitudAdjunto
+from ...models import IntentoIntegracion, JiraIntegracion, Solicitud, Usuario, SolicitudAdjunto, SolicitudComentario
 from ...schemas.adjunto import AdjuntoResponse
+from ...schemas.comentario import ComentarioCreate, ComentarioResponse
 from ...schemas.jira import SyncResultResponse
 from ...schemas.solicitud import SolicitudCreate, SolicitudDetailResponse, SolicitudResponse
-from ...services.jira_client import JiraClient, JiraClientError, SyncNotAvailableError
+from ...services.jira_client import JiraClient, JiraClientError, SyncNotAvailableError, PORTAL_COMMENT_PROPERTY
 from ..deps import Database, PortalUser, get_jira_client, require_role
 
 router = APIRouter(prefix="/solicitudes", tags=["solicitudes"])
@@ -111,13 +112,13 @@ ATTACHMENT_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jp
                    ".pdf": "application/pdf", ".txt": "text/plain"}
 
 
-async def attachment_solicitud(solicitud_id: UUID, db, user: Usuario) -> Solicitud:
+async def accessible_solicitud(solicitud_id: UUID, db, user: Usuario) -> Solicitud:
     item = await db.scalar(select(Solicitud).where(Solicitud.id == solicitud_id)
                            .options(selectinload(Solicitud.jira_integracion)))
     if item is None:
         raise HTTPException(status_code=404, detail="Solicitud no encontrada.")
     if user.rol == "solicitante" and item.autor_id != user.id:
-        raise HTTPException(status_code=403, detail="No puedes acceder a adjuntos de otros usuarios.")
+        raise HTTPException(status_code=403, detail="No puedes acceder a solicitudes de otros usuarios.")
     return item
 
 
@@ -128,7 +129,7 @@ async def upload_adjunto(
     file: Annotated[UploadFile, File()],
 ):
     try:
-        item = await attachment_solicitud(solicitud_id, db, user)
+        item = await accessible_solicitud(solicitud_id, db, user)
         link = item.jira_integracion
         if link is None or not link.jira_issue_key or link.estado_integracion != "sincronizado":
             raise HTTPException(status_code=409, detail="La solicitud no tiene un ticket Jira sincronizado.")
@@ -183,7 +184,7 @@ async def upload_adjunto(
 
 @router.get("/{solicitud_id}/adjuntos", response_model=list[AdjuntoResponse])
 async def get_adjuntos(solicitud_id: UUID, db: Database, user: PortalUser):
-    await attachment_solicitud(solicitud_id, db, user)
+    await accessible_solicitud(solicitud_id, db, user)
     return list((await db.scalars(
         select(SolicitudAdjunto).where(SolicitudAdjunto.solicitud_id == solicitud_id)
         .order_by(SolicitudAdjunto.created_at, SolicitudAdjunto.id)
@@ -195,7 +196,7 @@ async def download_adjunto(
     solicitud_id: UUID, adjunto_id: UUID, db: Database, user: PortalUser,
     jira: Annotated[JiraClient, Depends(get_jira_client)],
 ):
-    await attachment_solicitud(solicitud_id, db, user)
+    await accessible_solicitud(solicitud_id, db, user)
     attachment = await db.scalar(select(SolicitudAdjunto).where(
         SolicitudAdjunto.id == adjunto_id, SolicitudAdjunto.solicitud_id == solicitud_id,
     ))
@@ -209,3 +210,95 @@ async def download_adjunto(
         "Content-Disposition": f"attachment; filename*=UTF-8''{quote(attachment.nombre_archivo, safe='')}",
         "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff",
     })
+
+
+@router.post("/{solicitud_id}/comentarios", response_model=ComentarioResponse, status_code=201)
+async def create_comentario(
+    solicitud_id: UUID, payload: ComentarioCreate, db: Database, user: PortalUser,
+    response: Response, jira: Annotated[JiraClient, Depends(get_jira_client)],
+):
+    item = await accessible_solicitud(solicitud_id, db, user)
+    issue_key = item.jira_integracion.jira_issue_key if item.jira_integracion else None
+    comment = SolicitudComentario(
+        solicitud_id=solicitud_id, autor_id=user.id, autor_nombre=user.nombre,
+        origen="portal", contenido=payload.contenido,
+    )
+    db.add(comment)
+    await db.commit()
+    local_response = ComentarioResponse.model_validate(comment)
+    response.headers["X-Jira-Comments-Sync"] = "not-linked"
+    if not issue_key:
+        return local_response
+    try:
+        remote_id = await jira.add_issue_comment(issue_key, user.nombre, comment.contenido, comment.id)
+    except JiraClientError:
+        response.headers["X-Jira-Comments-Sync"] = "failed"
+        return local_response
+    try:
+        # Coordinar la confirmación con un GET que pueda haber reconciliado el eco.
+        await db.scalar(select(Solicitud.id).where(Solicitud.id == solicitud_id).with_for_update())
+        comment = await db.get(SolicitudComentario, local_response.id, populate_existing=True)
+        if comment is None:
+            raise HTTPException(status_code=404, detail="El comentario ya no existe.")
+        comment.jira_comment_id = remote_id
+        await db.commit()
+    except SQLAlchemyError:
+        await db.rollback()
+        response.headers["X-Jira-Comments-Sync"] = "failed"
+        return local_response
+    response.headers["X-Jira-Comments-Sync"] = "ok"
+    return comment
+
+
+@router.get("/{solicitud_id}/comentarios", response_model=list[ComentarioResponse])
+async def get_comentarios(
+    solicitud_id: UUID, db: Database, user: PortalUser, response: Response,
+    jira: Annotated[JiraClient, Depends(get_jira_client)],
+):
+    item = await accessible_solicitud(solicitud_id, db, user)
+    issue_key = item.jira_integracion.jira_issue_key if item.jira_integracion else None
+    response.headers["X-Jira-Comments-Sync"] = "not-linked"
+    statement = select(SolicitudComentario).where(SolicitudComentario.solicitud_id == solicitud_id)
+    if issue_key:
+        try:
+            await db.scalar(select(Solicitud.id).where(Solicitud.id == solicitud_id).with_for_update())
+            remote_comments = await jira.get_issue_comments(issue_key)
+            # Validar y convertir todo antes de modificar la copia local.
+            parsed = [(remote, jira.comment_plain_text(remote.body)) for remote in remote_comments]
+            local = list((await db.scalars(statement)).all())
+            by_remote = {row.jira_comment_id: row for row in local if row.jira_comment_id}
+            by_uuid = {str(row.id): row for row in local if row.origen == "portal"}
+            for remote, text in parsed:
+                internal = any(prop.key == "sd.public.comment" and isinstance(prop.value, dict)
+                               and prop.value.get("internal") is True for prop in remote.properties)
+                if remote.visibility or internal:
+                    cached = by_remote.get(remote.id)
+                    if cached is not None and cached.origen == "jira":
+                        await db.delete(cached)
+                        by_remote.pop(remote.id, None)
+                    continue
+                if remote.id in by_remote:
+                    continue
+                portal_property = next((prop for prop in remote.properties if prop.key == PORTAL_COMMENT_PROPERTY), None)
+                if portal_property is not None:
+                    original = by_uuid.get(str(portal_property.value))
+                    if original is not None and original.jira_comment_id is None:
+                        original.jira_comment_id = remote.id
+                        by_remote[remote.id] = original
+                    continue
+                comment = SolicitudComentario(
+                    solicitud_id=solicitud_id, autor_nombre=remote.author.displayName,
+                    origen="jira", contenido=text,
+                    jira_comment_id=remote.id, created_at=remote.created.astimezone(timezone.utc),
+                )
+                db.add(comment)
+                by_remote[remote.id] = comment
+            await db.commit()
+        except (JiraClientError, ValueError, SQLAlchemyError):
+            await db.rollback()
+            response.headers["X-Jira-Comments-Sync"] = "failed"
+        else:
+            response.headers["X-Jira-Comments-Sync"] = "ok"
+    return list((await db.scalars(statement.order_by(
+        SolicitudComentario.created_at, SolicitudComentario.id,
+    ))).all())

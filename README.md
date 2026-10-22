@@ -5,7 +5,7 @@
 [![TailwindCSS](https://img.shields.io/badge/Styles-Tailwind%20CSS-38B2AC?logo=tailwind-css&logoColor=white)](https://tailwindcss.com/)
 [![Supabase](https://img.shields.io/badge/Database-Supabase%20PostgreSQL-3ECF8E?logo=supabase&logoColor=white)](https://supabase.com/)
 [![Jira](https://img.shields.io/badge/Issue%20Tracker-Jira%20Cloud%20REST%20v3-0052CC?logo=jira&logoColor=white)](https://www.atlassian.com/software/jira)
-[![Tests](https://img.shields.io/badge/Tests-181%20Passed-brightgreen?logo=pytest)](https://docs.pytest.org/)
+[![Tests](https://img.shields.io/badge/Tests-223%20Passed-brightgreen?logo=pytest)](https://docs.pytest.org/)
 
 Solución empresarial diseñada para gestionar el ciclo de vida de incidentes y mejoras técnicas. Permite a los colaboradores registrar requerimientos desde un portal web moderno, sincroniza automáticamente el trabajo con **Jira Cloud** (mediante su REST API v3) y provee un **Dashboard de Gestión** analítico para la coordinación de TI.
 
@@ -70,7 +70,7 @@ flowchart TD
 
 ```text
 jira-portal-solicitudes/
-├── .codex/                     # Especificaciones técnicas (SPEC-001 a SPEC-007) y reglas
+├── .codex/                     # Especificaciones técnicas (SPEC-001 a SPEC-008) y reglas
 ├── backend/                    # API REST asíncrona en Python
 │   ├── app/
 │   │   ├── api/v1/             # Endpoints (auth, solicitudes, jira, dashboard)
@@ -79,7 +79,7 @@ jira-portal-solicitudes/
 │   │   ├── schemas/            # Contratos de datos Pydantic v2
 │   │   └── services/           # Clientes HTTP asíncronos y lógica analítica
 │   ├── migrations/             # Scripts SQL idempotentes para Supabase
-│   ├── tests/                  # Suite de 181 pruebas unitarias y de integración
+│   ├── tests/                  # Suite de 223 pruebas unitarias y de integración
 │   ├── requirements.txt
 │   └── Dockerfile
 ├── frontend/                   # Single Page Application (SPA)
@@ -134,7 +134,7 @@ npm run dev
 
 ## 🧪 Pruebas Automatizadas
 
-El proyecto incluye **181 pruebas unitarias y de integración** con `pytest` que cubren contratos de datos, roles, fallos de red simulados, formatos ADF y agregaciones del dashboard:
+El proyecto incluye **223 pruebas unitarias y de integración** con `pytest` que cubren contratos de datos, roles, fallos de red simulados, formatos ADF y agregaciones del dashboard:
 
 ```bash
 cd backend
@@ -217,3 +217,28 @@ Los errores, permisos y límites complementarios están documentados en
 [Contratos de SPEC-007](docs/SPEC-007-contratos-complementarios.md). La comprobación
 multipart y los eventos se prueban con dobles HTTP y SQLite; la subida a un ticket
 real y la latencia de Supabase quedan pendientes de validación en el entorno cloud.
+
+
+### Comentarios bidireccionales (SPEC-008)
+
+El detalle incluye un timeline con autor, fecha, badges Portal/Jira y formulario
+(2–2000 caracteres). GET y POST `/api/v1/solicitudes/{id}/comentarios` mantienen
+los permisos del autor y del coordinador. El POST guarda primero en PostgreSQL y
+publica en Jira usando ADF. Si falla el envío, conserva el comentario local y la
+interfaz avisa «Guardado solo en el portal», sin repetir el POST automáticamente.
+
+Al consultar o actualizar el timeline se recorren las páginas de comentarios de
+Jira y se importan los públicos con sus fechas originales. El ID remoto y una
+propiedad con el UUID local evitan ecos y permiten reconciliar envíos inciertos.
+Un fallo de consulta devuelve la copia local con un aviso. Los comentarios con
+visibilidad restringida no se importan. No se sincronizan ediciones ni borrados
+generales en esta etapa.
+
+Para activarlo en un entorno existente, aplica
+`backend/migrations/003_add_comentarios_table.sql` con la conexión autorizada de
+migraciones. La cuenta técnica de Jira necesita permisos para leer y añadir
+comentarios. La migración no se aplicó en Supabase ni se publicaron comentarios
+reales durante la verificación: se usaron SQLite y dobles HTTP.
+
+Los contratos de errores, sincronización y permisos se detallan en
+[Contratos de SPEC-008](docs/SPEC-008-contratos-complementarios.md).

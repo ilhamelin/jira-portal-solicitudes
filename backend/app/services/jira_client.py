@@ -18,10 +18,12 @@ from ..models import IntentoIntegracion, JiraIntegracion, Solicitud
 from ..schemas.jira import BulkSyncResponse, JiraIssueResponse, JiraSyncResponse, SyncResultResponse
 from ..schemas.adjunto import JiraAttachmentResponse
 from ..schemas.webhook import JiraWebhookPayload, WebhookIssue
+from ..schemas.comentario import JiraComment, JiraCommentPage
 
 ISSUE_TYPES = {"incidente": "Error", "mejora": "Tarea"}
 PRIORITIES = {"baja": "Lowest", "media": "Medium", "alta": "High", "urgente": "Highest"}
 TERMINAL_STATES = {"Cerrado", "Rechazado"}
+PORTAL_COMMENT_PROPERTY = "portal_comment_id"
 STATUS_ALIASES = {
     "Recibido": ("Backlog", "Por hacer", "To Do", "Recibido", "Abierto"),
     "En análisis": ("Seleccionado para desarrollo", "En análisis", "In Analysis", "Under Review"),
@@ -135,6 +137,93 @@ class JiraClient:
 
     async def aclose(self) -> None:
         await self._client.aclose()
+
+    @staticmethod
+    def build_comment_payload(author: str, content: str, comment_id: UUID) -> dict:
+        return {
+            "body": {"type": "doc", "version": 1, "content": [
+                {"type": "paragraph", "content": [
+                    {"type": "text", "text": f"[Portal - {author}]: {content}"},
+                ]},
+            ]},
+            "properties": [{"key": PORTAL_COMMENT_PROPERTY, "value": str(comment_id)}],
+        }
+
+    async def add_issue_comment(self, issue_key: str, author: str, content: str, comment_id: UUID) -> str:
+        # No repetir un POST de resultado incierto; el UUID permite reconciliarlo por GET.
+        try:
+            response = await self._client.post(
+                f"/rest/api/3/issue/{quote(issue_key, safe='')}/comment",
+                json=self.build_comment_payload(author, content, comment_id),
+            )
+        except httpx.RequestError:
+            raise JiraClientError("No pudimos confirmar el envío del comentario a Jira.") from None
+        if response.status_code != 201:
+            raise JiraClientError(f"Jira devolvió HTTP {response.status_code} al comentar.", response.status_code)
+        try:
+            payload = response.json()
+            comment_id = payload["id"]
+            if not isinstance(comment_id, str) or not comment_id.isascii() or not comment_id.isdigit() or len(comment_id) > 50:
+                raise ValueError
+        except (ValueError, KeyError, TypeError):
+            raise JiraClientError("Jira devolvió un identificador de comentario inválido.", 201) from None
+        return comment_id
+
+    async def get_issue_comments(self, issue_key: str) -> list[JiraComment]:
+        comments = []
+        offset = 0
+        # Recorrer páginas explícitamente, sin seguir enlaces remotos arbitrarios.
+        for _ in range(1000):
+            try:
+                response = await self._client.get(
+                    f"/rest/api/3/issue/{quote(issue_key, safe='')}/comment",
+                    params={"startAt": offset, "maxResults": 100, "orderBy": "created", "expand": "properties"},
+                )
+            except httpx.RequestError:
+                raise JiraClientError("No se pudieron consultar los comentarios de Jira.") from None
+            if response.status_code != 200:
+                raise JiraClientError(f"Jira devolvió HTTP {response.status_code} al consultar comentarios.", response.status_code)
+            try:
+                page = JiraCommentPage.model_validate(response.json())
+                if page.startAt != offset or (not page.comments and offset < page.total):
+                    raise ValueError
+            except (ValueError, ValidationError):
+                raise JiraClientError("Jira devolvió una página de comentarios inválida.", 200) from None
+            comments.extend(page.comments)
+            offset += len(page.comments)
+            if offset >= page.total:
+                return comments
+        raise JiraClientError("La consulta de comentarios superó el límite de páginas.")
+
+    @staticmethod
+    def comment_plain_text(body: dict) -> str:
+        """Extraer texto de ADF, preservando bloques y sin devolver HTML ejecutable."""
+        def visit(node, depth=0):
+            if depth > 32 or not isinstance(node, dict):
+                raise ValueError("Documento ADF inválido.")
+            kind = node.get("type")
+            if kind == "text":
+                text = node.get("text")
+                if not isinstance(text, str):
+                    raise ValueError("Texto ADF inválido.")
+                return text
+            if kind == "hardBreak":
+                return "\n"
+            attrs = node.get("attrs", {})
+            if not isinstance(attrs, dict):
+                raise ValueError("Atributos ADF inválidos.")
+            if kind in {"mention", "emoji", "inlineCard"}:
+                return str(attrs.get("text") or attrs.get("shortName") or attrs.get("url") or "")
+            if kind in {"media", "mediaInline"}:
+                return "[Archivo adjunto]"
+            children = node.get("content", [])
+            if not isinstance(children, list):
+                raise ValueError("Contenido ADF inválido.")
+            separator = "\n" if kind in {"doc", "bulletList", "orderedList", "listItem", "blockquote", "table", "tableRow", "tableCell"} else ""
+            return separator.join(visit(child, depth + 1) for child in children)
+        if body.get("type") != "doc" or body.get("version") != 1:
+            raise ValueError("Documento ADF inválido.")
+        return visit(body).strip()
 
     async def upload_attachment(
         self, issue_key: str, filename: str, content: bytes, mime_type: str,

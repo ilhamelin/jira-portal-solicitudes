@@ -341,7 +341,7 @@ async def test_password_security():
 
 async def test_models_match_existing_postgres_types():
     dialect = postgresql.dialect()
-    assert set(Base.metadata.tables) == {"usuarios", "solicitudes", "jira_integraciones", "intentos_integracion", "solicitud_adjuntos"}
+    assert set(Base.metadata.tables) == {"usuarios", "solicitudes", "jira_integraciones", "intentos_integracion", "solicitud_adjuntos", "solicitud_comentarios"}
     assert Solicitud.__table__.c.tipo.type.name == "tipo_solicitud"
     assert Solicitud.__table__.c.estado_negocio.type.enums == ["Recibido", "En análisis", "En desarrollo", "En pruebas", "Cerrado", "Rechazado"]
     assert IntentoIntegracion.__table__.c.payload_respuesta.type.compile(dialect=dialect) == "JSONB"

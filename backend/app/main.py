@@ -56,6 +56,7 @@ def create_app(settings: Settings | None = None, *, engine: AsyncEngine | None =
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["X-Jira-Comments-Sync"],
     )
     application.include_router(auth.router, prefix="/api/v1")
     application.include_router(solicitudes.router, prefix="/api/v1")
