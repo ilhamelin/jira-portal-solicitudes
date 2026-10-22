@@ -53,6 +53,7 @@ def create_app(settings: Settings | None = None, *, engine: AsyncEngine | None =
     application.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
+        allow_origin_regex=r"^https://.*\.vercel\.app$",
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
