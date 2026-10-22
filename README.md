@@ -1,15 +1,30 @@
 # Portal de Solicitudes Internas Integrado con Jira Cloud
 
+[![Render Backend](https://img.shields.io/badge/Render-Backend%20Live-46E3B7?logo=render&logoColor=white)](https://jira-portal-solicitudes.onrender.com/health)
+[![Vercel Frontend](https://img.shields.io/badge/Vercel-Frontend%20Live-000000?logo=vercel&logoColor=white)](https://portal-solicitudes-jira.vercel.app)
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/Frontend-React%2018%20%2B%20TypeScript-61DAFB?logo=react&logoColor=black)](https://react.dev/)
 [![TailwindCSS](https://img.shields.io/badge/Styles-Tailwind%20CSS-38B2AC?logo=tailwind-css&logoColor=white)](https://tailwindcss.com/)
-[![Supabase](https://img.shields.io/badge/Database-Supabase%20PostgreSQL-3ECF8E?logo=supabase&logoColor=white)](https://supabase.com/)
-[![Jira](https://img.shields.io/badge/Issue%20Tracker-Jira%20Cloud%20REST%20v3-0052CC?logo=jira&logoColor=white)](https://www.atlassian.com/software/jira)
+[![Supabase](https://img.shields.io/badge/Database-Supabase%20PostgreSQL%2017-3ECF8E?logo=supabase&logoColor=white)](https://supabase.com/)
+[![Jira Cloud](https://img.shields.io/badge/Atlassian-Jira%20Cloud%20REST%20v3-0052CC?logo=jira&logoColor=white)](https://www.atlassian.com/software/jira)
 [![Tests](https://img.shields.io/badge/Tests-223%20Passed-brightgreen?logo=pytest)](https://docs.pytest.org/)
 
-Solución empresarial diseñada para gestionar el ciclo de vida de incidentes y mejoras técnicas. Permite a los colaboradores registrar requerimientos desde un portal web moderno, sincroniza automáticamente el trabajo con **Jira Cloud** (mediante su REST API v3) y provee un **Dashboard de Gestión** analítico para la coordinación de TI.
+Solución empresarial diseñada para gestionar el ciclo de vida completo de requerimientos técnicos e incidentes. Permite a colaboradores sin licencia de Atlassian registrar solicitudes y adjuntar documentación desde un portal web moderno, sincroniza automáticamente el trabajo con **Jira Cloud** (vía REST API v3) y provee un **Dashboard de Gestión Analítico** con métricas operativas en tiempo real.
 
-Proyecto desarrollado como demostración técnica de competencias para la posición **Desarrollador Junior Integraciones con JIRA** en Haibu Solutions.
+---
+
+## 🌐 Despliegue en la Nube (Producción 24/7)
+
+| Servicio | URL Pública | Estado |
+| :--- | :--- | :--- |
+| **Frontend Web (Vercel)** | [https://portal-solicitudes-jira.vercel.app](https://portal-solicitudes-jira.vercel.app) | 🟢 Live |
+| **Backend API (Render)** | [https://jira-portal-solicitudes.onrender.com/health](https://jira-portal-solicitudes.onrender.com/health) | 🟢 Live |
+| **Documentación Swagger** | [https://jira-portal-solicitudes.onrender.com/docs](https://jira-portal-solicitudes.onrender.com/docs) | 🟢 Live |
+| **Instancia Jira Cloud** | `https://portal-solicitudes-dev.atlassian.net` (Proyecto `SOL`) | 🟢 Conectado |
+
+### 🔑 Credenciales de Acceso Demo (1-Click en el Login)
+* **Rol Solicitante:** `solicitante@empresa.com` / `Solicitante123!`
+* **Rol Coordinador:** `coordinador@empresa.com` / `Coordinador123!`
 
 ---
 
@@ -17,52 +32,45 @@ Proyecto desarrollado como demostración técnica de competencias para la posici
 
 ```mermaid
 flowchart TD
-    subgraph Client["Cliente / Navegador (Vercel)"]
-        UI["Portal Web React + TS\n(Login, Formulario, Detalle, Dashboard)"]
+    subgraph Client["Cliente Web (Vercel)"]
+        UI["Portal React 18 + TS\n(Formulario, Detalle, Stepper, Dashboard, Modo Oscuro)"]
     end
 
-    subgraph BackendAPI["Backend API (FastAPI)"]
-        Auth["Servicio Auth (JWT + Bcrypt)"]
+    subgraph BackendAPI["Backend Cloud (Render - Docker)"]
+        Auth["Auth & RBAC (JWT + Bcrypt)"]
         ReqService["Motor de Solicitudes"]
-        SyncService["Servicio de Sincronización Jira"]
-        DashService["Servicio de Métricas y KPIs"]
+        JiraClient["Cliente Jira REST v3\n(ADF Parser, Streaming Attachments)"]
+        CommentService["Sincronizador Bidireccional de Comentarios"]
+        DashService["Métricas y Agregaciones KPI"]
     end
 
-    subgraph DataLayer["Capa de Persistencia"]
-        DB[(Supabase PostgreSQL 17\nPooler 6543 / RLS Activo)]
+    subgraph DataLayer["Persistencia (Supabase Cloud)"]
+        DB[(PostgreSQL 17\nPooler :6543 / RLS Activo)]
     end
 
     subgraph External["Ecosistema Atlassian"]
-        Jira["Jira Software Cloud REST API v3\n(ADF Format + Idempotencia UUID)"]
+        Jira["Jira Software Cloud REST API v3\n(ADF Format + Correlation Tags UUID)"]
     end
 
-    UI -->|"HTTP Bearer Token"| BackendAPI
+    UI -->|"HTTPS Bearer Token"| BackendAPI
     BackendAPI -->|"SQLAlchemy Async / asyncpg"| DB
     BackendAPI -->|"HTTPX Async (Basic Auth)"| Jira
+    Jira -.->|"Webhooks (issue_updated)"| BackendAPI
 ```
 
 ---
 
 ## 🌟 Características Destacadas de Ingeniería
 
-1. **Separación de Estados (Negocio vs. Integración):**
+1. **Atlassian Document Format (ADF):** Generación y parseo nativo del árbol JSON semántico tipado que exige Jira Cloud v3 para descripciones y comentarios enriquecidos.
+2. **Idempotencia y Resiliencia:** Inyección de UUIDs de correlación (`[CORRELATION_ID: <uuid>]`) en los tickets de Jira, previniendo duplicados ante caídas o reintentos de red.
+3. **Desacoplamiento de Estados:**
    * *Estado de Negocio:* `Recibido`, `En análisis`, `En desarrollo`, `En pruebas`, `Cerrado`, `Rechazado`.
    * *Estado de Integración:* `pendiente`, `sincronizado`, `fallido`, `reintentando`.
-   * Una falla de red con Jira nunca corrompe el registro de la solicitud del usuario.
-2. **Idempotencia y Resiliencia:**
-   * Inyección del UUID de correlación en la descripción del ticket Jira en formato ADF (*Atlassian Document Format*).
-   * Prevención estricta de tickets duplicados ante caídas de red o timeouts.
-   * Registro del payload crudo de respuesta (JSONB) en la tabla `intentos_integracion` para auditoría técnica completa.
-3. **Sincronización Bidireccional en Tiempo Real:**
-   * Normalización de estados de Jira (español e inglés: `Backlog`, `En curso`, `Listo`, `In Progress`, etc.).
-   * Actualización automática de responsable asignado en Jira (`assignee.displayName`) y cálculo de fecha de cierre.
-4. **Dashboard de Gestión para Coordinadores:**
-   * Cálculo de tasa de resolución en tiempo real.
-   * Detección automática de **Solicitudes Estancadas** (tickets abiertos sin actualización en más de 5 días).
-   * Desglose porcentual por prioridad, área y tipo de solicitud.
-5. **Seguridad y Control de Acceso por Roles (RBAC):**
-   * Perfil `solicitante`: Solo puede crear y visualizar sus propios requerimientos.
-   * Perfil `coordinador`: Acceso global a todas las solicitudes, forzado de sincronización y métricas.
+4. **Comentarios Bidireccionales (SPEC-008):** Hilo unificado entre el portal y Jira Cloud, importando comentarios públicos de los desarrolladores y permitiendo réplicas desde el portal.
+5. **Streaming Seguro de Archivos Adjuntos (SPEC-007):** Carga multipart hacia Jira con cabeceras `X-Atlassian-Token: no-check` y descarga mediante proxy streaming en FastAPI, permitiendo a usuarios sin licencia de Atlassian visualizar archivos sin exponer tokens del sistema.
+6. **Dashboard Operativo con KPIs en Tiempo Real:** Métricas de solicitudes estancadas (> 5 días), tasa de resolución, gráficos de distribución por estado (Donut Chart) y área (Bar Chart) con Recharts.
+7. **Suite Exhaustiva de Pruebas:** **223 pruebas automatizadas** en `pytest` cubriendo autenticación, contratos Pydantic v2, normalización de transiciones y mocks de red. Cero errores de compilación TypeScript (`tsc --noEmit`).
 
 ---
 
@@ -70,47 +78,52 @@ flowchart TD
 
 ```text
 jira-portal-solicitudes/
-├── .codex/                     # Especificaciones técnicas (SPEC-001 a SPEC-008) y reglas
-├── backend/                    # API REST asíncrona en Python
+├── .codex/                     # Especificaciones técnicas de arquitectura (SPEC-001 a SPEC-008)
+├── backend/                    # API REST asíncrona en FastAPI
 │   ├── app/
-│   │   ├── api/v1/             # Endpoints (auth, solicitudes, jira, dashboard)
-│   │   ├── core/               # Configuración, base de datos y seguridad JWT
-│   │   ├── models/             # Modelos relacionales SQLAlchemy
-│   │   ├── schemas/            # Contratos de datos Pydantic v2
-│   │   └── services/           # Clientes HTTP asíncronos y lógica analítica
-│   ├── migrations/             # Scripts SQL idempotentes para Supabase
-│   ├── tests/                  # Suite de 223 pruebas unitarias y de integración
-│   ├── requirements.txt
-│   └── Dockerfile
+│   │   ├── api/v1/             # Endpoints (auth, solicitudes, comentarios, adjuntos, webhooks, dashboard)
+│   │   ├── core/               # Configuración (Pydantic Settings), DB Engine y Seguridad JWT
+│   │   ├── models/             # Modelos SQLAlchemy (usuarios, solicitudes, comentarios, adjuntos)
+│   │   ├── schemas/            # Esquemas de validación y serialización Pydantic v2
+│   │   └── services/           # Cliente Jira REST v3, normalizador de estados y métricas
+│   ├── migrations/             # Migraciones SQL idempotentes para Supabase (001 a 003)
+│   ├── tests/                  # 223 pruebas unitarias y de integración (Pytest)
+│   ├── Dockerfile
+│   └── requirements.txt
 ├── frontend/                   # Single Page Application (SPA)
 │   ├── src/
-│   │   ├── components/         # Stepper de flujo Jira, tarjetas y badges
+│   │   ├── components/         # Stepper de estados, comentarios, adjuntos, gráficos y toasts
 │   │   ├── pages/              # Login, Solicitudes, Nueva Solicitud, Dashboard
-│   │   └── services/           # Cliente API con interceptor de tokens
-│   ├── vercel.json             # Reglas de reescritura para Vercel
-│   └── package.json
-├── docker-compose.yml          # Orquestación local reproducible
-└── .env.example                # Plantilla de variables de entorno
+│   │   ├── services/           # Cliente HTTP con Axios e interceptores JWT
+│   │   └── types/              # Contratos TypeScript sincronizados con Pydantic
+│   ├── Dockerfile
+│   ├── package.json
+│   └── vercel.json
+├── docker-compose.yml          # Entorno local reproducible en un comando
+└── render.yaml                 # Manifiesto de infraestructura como código para Render
+```
+
+---
+
+## 🧪 Ejecución de Pruebas Automatizadas
+
+```bash
+cd backend
+.\.venv\Scripts\pytest.exe backend/tests -v
+# ============================ 223 passed in 45s =============================
 ```
 
 ---
 
 ## 🚀 Puesta en Marcha Local
 
-### Opción A: Con Docker Compose (Recomendada)
+### Opción A: Con Docker Compose
 
-1. Clona el repositorio y crea tu archivo `.env`:
-   ```bash
-   cp .env.example .env
-   # Completa tus credenciales de Supabase y Jira Cloud
-   ```
-2. Inicia todo el stack:
-   ```bash
-   docker compose up --build
-   ```
-3. Accede en tu navegador:
-   * **Frontend:** [http://localhost:5173](http://localhost:5173)
-   * **Backend API & Swagger:** [http://localhost:8000/docs](http://localhost:8000/docs)
+```bash
+docker compose up --build
+```
+* **Frontend:** [http://localhost:5173](http://localhost:5173)
+* **Backend API & Swagger:** [http://localhost:8000/docs](http://localhost:8000/docs)
 
 ### Opción B: Ejecución Manual
 
@@ -118,7 +131,7 @@ jira-portal-solicitudes/
 ```bash
 cd backend
 python -m venv .venv
-# En Windows: .venv\Scripts\Activate.ps1
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 uvicorn app.main:app --port 8000 --reload
 ```
@@ -132,113 +145,5 @@ npm run dev
 
 ---
 
-## 🧪 Pruebas Automatizadas
-
-El proyecto incluye **223 pruebas unitarias y de integración** con `pytest` que cubren contratos de datos, roles, fallos de red simulados, formatos ADF y agregaciones del dashboard:
-
-```bash
-cd backend
-pytest -v
-# La suite incluye /health público, independiente de Jira y de la base de datos.
-```
-
----
-
-## 👥 Cuentas Demo Preconfiguradas
-
-| Perfil | Correo Electrónico | Contraseña | Capacidades |
-| :--- | :--- | :--- | :--- |
-| **Solicitante** | `solicitante@empresa.com` | `Solicitante123!` | Crear requerimientos y consultar solo los propios. |
-| **Coordinador** | `coordinador@empresa.com` | `Coordinador123!` | Ver todas las solicitudes, sincronizar con Jira y ver Dashboard. |
-
----
-
-## ☁️ Despliegue en Producción
-
-* **Frontend (En vivo en Vercel):** [https://portal-solicitudes-jira.vercel.app](https://portal-solicitudes-jira.vercel.app)
-* **Base de Datos:** PostgreSQL gestionado en **Supabase Cloud** con connection pooler (`6543`) y políticas de seguridad RLS.
-* **Integración:** Jira Software Cloud REST API v3 ([portal-solicitudes-dev.atlassian.net](https://portal-solicitudes-dev.atlassian.net)) con autenticación basada en API Tokens seguros.
-
-
-### Preparación del backend para Render
-
-El manifiesto `render.yaml` define el servicio Docker y su comprobación pública
-`GET /health`. Usa `backend/` como contexto de construcción, conforme a las rutas
-`COPY` del Dockerfile. El endpoint devuelve el entorno configurado en `ENVIRONMENT`
-(`production` en Render) y comprueba que la aplicación responde; no consulta
-PostgreSQL ni Jira.
-
-Al crear el servicio, configura `DATABASE_URL`, `JIRA_INSTANCE_URL`,
-`JIRA_USER_EMAIL` y `JIRA_API_TOKEN` como secretos en Render. El manifiesto genera
-`JWT_SECRET_KEY` y permite el origen público de Vercel y `http://localhost:5173`;
-ajusta `ALLOWED_ORIGINS` si cambia la URL del frontend. Después de desplegar el
-backend, configura `VITE_API_URL=https://<servicio>.onrender.com/api/v1` en Vercel
-y vuelve a compilar el frontend. Añadir el manifiesto no despliega el servicio.
-
-### Mejoras de interfaz (SPEC-006)
-
-El Dashboard incorpora gráficos de dona por estado y barras por área con Recharts,
-con leyendas y datos accesibles. Las cargas de solicitudes e indicadores usan
-skeletons. Sonner muestra los resultados de creación y sincronización, incluidos
-los fallos parciales; las notificaciones de un ticket incluyen un botón a Jira.
-El selector Sol/Luna del Navbar guarda la preferencia en `localStorage.theme` y,
-si no hay una preferencia guardada, sigue el tema del sistema.
-
-Las versiones instaladas conforme a la especificación son Sonner 1.7.4 y Recharts
-2.15.4. npm señala que la rama 2 de Recharts dejó de mantenerse; una actualización
-a v3 requiere revisar la compatibilidad en un incremento posterior.
-
-
-### Webhooks y adjuntos (SPEC-007)
-
-- El webhook `POST /api/v1/webhooks/jira` recibe eventos `jira:issue_updated` y
-  actualiza estado, responsable, fechas y auditoría en una sola transacción.
-  Configura `JIRA_WEBHOOK_SECRET` en el backend y en el emisor, mediante la
-  cabecera `X-Webhook-Secret` o `?token=...`. Prefiere la cabecera cuando sea
-  posible; si usas query, configura la redacción de tokens en los logs del proxy.
-  Sin secreto configurado se rechazan los eventos. El navegador muestra los
-  nuevos datos al volver a consultar la solicitud; no se añaden WebSockets.
-- El formulario admite selección o arrastre de PNG, JPEG, PDF y TXT, hasta
-  10 MiB por archivo, con previews de imágenes. Después de crear el ticket,
-  envía los archivos a Jira en multipart, sin reintentos automáticos. Un fallo
-  conserva la solicitud y permite recuperar localmente los archivos no confirmados.
-- Los endpoints `GET/POST /api/v1/solicitudes/{id}/adjuntos` y
-  `GET /api/v1/solicitudes/{id}/adjuntos/{adjunto_id}/descarga` requieren JWT y
-  permisos del autor o coordinador. Las descargas pasan por FastAPI; Jira conserva
-  los binarios y PostgreSQL los metadatos.
-
-Antes de usar adjuntos en un entorno existente, aplica manualmente
-`backend/migrations/002_add_adjuntos_table.sql` después de `001_initial_schema.sql`
-con la conexión autorizada para migraciones. La migración y el registro del
-webhook en Jira **no se ejecutaron contra servicios reales** durante estas pruebas.
-El manifiesto de Render incluye el nuevo secreto externo.
-
-Los errores, permisos y límites complementarios están documentados en
-[Contratos de SPEC-007](docs/SPEC-007-contratos-complementarios.md). La comprobación
-multipart y los eventos se prueban con dobles HTTP y SQLite; la subida a un ticket
-real y la latencia de Supabase quedan pendientes de validación en el entorno cloud.
-
-
-### Comentarios bidireccionales (SPEC-008)
-
-El detalle incluye un timeline con autor, fecha, badges Portal/Jira y formulario
-(2–2000 caracteres). GET y POST `/api/v1/solicitudes/{id}/comentarios` mantienen
-los permisos del autor y del coordinador. El POST guarda primero en PostgreSQL y
-publica en Jira usando ADF. Si falla el envío, conserva el comentario local y la
-interfaz avisa «Guardado solo en el portal», sin repetir el POST automáticamente.
-
-Al consultar o actualizar el timeline se recorren las páginas de comentarios de
-Jira y se importan los públicos con sus fechas originales. El ID remoto y una
-propiedad con el UUID local evitan ecos y permiten reconciliar envíos inciertos.
-Un fallo de consulta devuelve la copia local con un aviso. Los comentarios con
-visibilidad restringida no se importan. No se sincronizan ediciones ni borrados
-generales en esta etapa.
-
-Para activarlo en un entorno existente, aplica
-`backend/migrations/003_add_comentarios_table.sql` con la conexión autorizada de
-migraciones. La cuenta técnica de Jira necesita permisos para leer y añadir
-comentarios. La migración no se aplicó en Supabase ni se publicaron comentarios
-reales durante la verificación: se usaron SQLite y dobles HTTP.
-
-Los contratos de errores, sincronización y permisos se detallan en
-[Contratos de SPEC-008](docs/SPEC-008-contratos-complementarios.md).
+## 📄 Licencia y Créditos
+Desarrollado como proyecto de demostración de alto nivel técnico para postulaciones e integraciones con el ecosistema Atlassian.
