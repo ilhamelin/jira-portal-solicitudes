@@ -155,6 +155,6 @@ pytest -v
 
 ## ☁️ Despliegue en Producción
 
-* **Frontend (En vivo en Vercel):** [https://frontend-coral-sigma-1sne3zsi6e.vercel.app](https://frontend-coral-sigma-1sne3zsi6e.vercel.app)
+* **Frontend (En vivo en Vercel):** [https://portal-solicitudes-jira.vercel.app](https://portal-solicitudes-jira.vercel.app)
 * **Base de Datos:** PostgreSQL gestionado en **Supabase Cloud** con connection pooler (`6543`) y políticas de seguridad RLS.
 * **Integración:** Jira Software Cloud REST API v3 ([portal-solicitudes-dev.atlassian.net](https://portal-solicitudes-dev.atlassian.net)) con autenticación basada en API Tokens seguros.
