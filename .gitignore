@@ -1,0 +1,22 @@
+# Entornos y dependencias
+.env
+.env.local
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+node_modules/
+dist/
+build/
+
+# Logs y base de datos local
+*.log
+*.sqlite
+.DS_Store
+Thumbs.db
+
+# IDEs
+.idea/
+.vscode/
+*.swp
