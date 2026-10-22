@@ -1,12 +1,16 @@
 from datetime import datetime, timezone
 from typing import Annotated
 from uuid import UUID
+from pathlib import PurePath
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, File, UploadFile, Response
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import selectinload
 
-from ...models import IntentoIntegracion, JiraIntegracion, Solicitud, Usuario
+from ...models import IntentoIntegracion, JiraIntegracion, Solicitud, Usuario, SolicitudAdjunto
+from ...schemas.adjunto import AdjuntoResponse
 from ...schemas.jira import SyncResultResponse
 from ...schemas.solicitud import SolicitudCreate, SolicitudDetailResponse, SolicitudResponse
 from ...services.jira_client import JiraClient, JiraClientError, SyncNotAvailableError
@@ -100,3 +104,108 @@ async def get_solicitud(solicitud_id: UUID, db: Database, user: PortalUser) -> S
             "payload_respuesta": item.payload_respuesta, "created_at": item.created_at,
         } for item in intentos],
     )
+
+
+MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024
+ATTACHMENT_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                   ".pdf": "application/pdf", ".txt": "text/plain"}
+
+
+async def attachment_solicitud(solicitud_id: UUID, db, user: Usuario) -> Solicitud:
+    item = await db.scalar(select(Solicitud).where(Solicitud.id == solicitud_id)
+                           .options(selectinload(Solicitud.jira_integracion)))
+    if item is None:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada.")
+    if user.rol == "solicitante" and item.autor_id != user.id:
+        raise HTTPException(status_code=403, detail="No puedes acceder a adjuntos de otros usuarios.")
+    return item
+
+
+@router.post("/{solicitud_id}/adjuntos", response_model=AdjuntoResponse, status_code=201)
+async def upload_adjunto(
+    solicitud_id: UUID, db: Database, user: PortalUser,
+    jira: Annotated[JiraClient, Depends(get_jira_client)],
+    file: Annotated[UploadFile, File()],
+):
+    try:
+        item = await attachment_solicitud(solicitud_id, db, user)
+        link = item.jira_integracion
+        if link is None or not link.jira_issue_key or link.estado_integracion != "sincronizado":
+            raise HTTPException(status_code=409, detail="La solicitud no tiene un ticket Jira sincronizado.")
+        name = file.filename or ""
+        if not name or len(name) > 255 or any(ord(char) < 32 or ord(char) == 127 for char in name) or "/" in name or "\\" in name:
+            raise HTTPException(status_code=422, detail="Nombre de archivo inválido.")
+        extension = PurePath(name).suffix.lower()
+        mime = ATTACHMENT_MIME.get(extension)
+        if mime is None or file.content_type != mime:
+            raise HTTPException(status_code=415, detail="Solo se permiten PNG, JPEG, PDF y TXT con su MIME correspondiente.")
+        content = await file.read(MAX_ATTACHMENT_SIZE + 1)
+        if len(content) > MAX_ATTACHMENT_SIZE:
+            raise HTTPException(status_code=413, detail="El archivo supera los 10 MB.")
+        if not content:
+            raise HTTPException(status_code=422, detail="El archivo está vacío.")
+        valid = True
+        if mime == "image/png":
+            valid = content.startswith(b"\x89PNG\r\n\x1a\n")
+        elif mime == "image/jpeg":
+            valid = content.startswith(b"\xff\xd8\xff")
+        elif mime == "application/pdf":
+            valid = content.startswith(b"%PDF-")
+        else:
+            try:
+                valid = "\x00" not in content.decode("utf-8")
+            except UnicodeDecodeError:
+                valid = False
+        if not valid:
+            raise HTTPException(status_code=415, detail="El contenido del archivo no corresponde a su formato.")
+        try:
+            remote = await jira.upload_attachment(link.jira_issue_key, name, content, mime)
+        except JiraClientError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from None
+        attachment = SolicitudAdjunto(
+            solicitud_id=solicitud_id, nombre_archivo=name, mime_type=mime,
+            tamanio_bytes=len(content), jira_attachment_id=remote.id,
+            url_descarga=f"{str(jira.settings.jira_instance_url).rstrip('/')}/rest/api/3/attachment/content/{remote.id}",
+        )
+        db.add(attachment)
+        try:
+            await db.commit()
+        except SQLAlchemyError:
+            await db.rollback()
+            raise HTTPException(
+                status_code=502,
+                detail="Jira recibió el archivo, pero no pudimos guardar su registro. Revisa el ticket antes de reenviarlo.",
+            ) from None
+        return attachment
+    finally:
+        await file.close()
+
+
+@router.get("/{solicitud_id}/adjuntos", response_model=list[AdjuntoResponse])
+async def get_adjuntos(solicitud_id: UUID, db: Database, user: PortalUser):
+    await attachment_solicitud(solicitud_id, db, user)
+    return list((await db.scalars(
+        select(SolicitudAdjunto).where(SolicitudAdjunto.solicitud_id == solicitud_id)
+        .order_by(SolicitudAdjunto.created_at, SolicitudAdjunto.id)
+    )).all())
+
+
+@router.get("/{solicitud_id}/adjuntos/{adjunto_id}/descarga")
+async def download_adjunto(
+    solicitud_id: UUID, adjunto_id: UUID, db: Database, user: PortalUser,
+    jira: Annotated[JiraClient, Depends(get_jira_client)],
+):
+    await attachment_solicitud(solicitud_id, db, user)
+    attachment = await db.scalar(select(SolicitudAdjunto).where(
+        SolicitudAdjunto.id == adjunto_id, SolicitudAdjunto.solicitud_id == solicitud_id,
+    ))
+    if attachment is None or not attachment.jira_attachment_id:
+        raise HTTPException(status_code=404, detail="Adjunto no encontrado.")
+    try:
+        content = await jira.download_attachment(attachment.jira_attachment_id)
+    except JiraClientError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from None
+    return Response(content, media_type=attachment.mime_type, headers={
+        "Content-Disposition": f"attachment; filename*=UTF-8''{quote(attachment.nombre_archivo, safe='')}",
+        "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff",
+    })

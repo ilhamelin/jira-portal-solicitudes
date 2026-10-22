@@ -29,6 +29,7 @@ def isolate_environment(monkeypatch):
         "JIRA_USER_EMAIL": "jira@empresa.com",
         "JIRA_API_TOKEN": "test-jira-token-never-use-in-production",
         "JIRA_PROJECT_KEY": "SOL",
+        "JIRA_WEBHOOK_SECRET": "test-only-webhook-secret",
         "ALLOWED_ORIGINS": "http://localhost:5173",
         "ENVIRONMENT": "test",
     }
@@ -103,7 +104,7 @@ async def jira_mock(settings):
     async def handle(request):
         mock.requests.append(request)
         # Registrar el JSON aquí también detecta payloads no serializables.
-        if request.content:
+        if request.content and request.headers.get("content-type", "").startswith("application/json"):
             json.loads(request.content)
         if mock.before_response:
             await mock.before_response(request)

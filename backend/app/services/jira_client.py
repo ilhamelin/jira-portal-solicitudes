@@ -16,6 +16,8 @@ from sqlalchemy.orm.attributes import flag_modified
 from ..core.config import Settings
 from ..models import IntentoIntegracion, JiraIntegracion, Solicitud
 from ..schemas.jira import BulkSyncResponse, JiraIssueResponse, JiraSyncResponse, SyncResultResponse
+from ..schemas.adjunto import JiraAttachmentResponse
+from ..schemas.webhook import JiraWebhookPayload, WebhookIssue
 
 ISSUE_TYPES = {"incidente": "Error", "mejora": "Tarea"}
 PRIORITIES = {"baja": "Lowest", "media": "Medium", "alta": "High", "urgente": "Highest"}
@@ -64,7 +66,8 @@ class JiraClient:
         token = settings.jira_api_token.get_secret_value()
         basic = b64encode(f"{settings.jira_user_email}:{token}".encode()).decode()
         self._secrets = (token, basic, settings.jwt_secret_key.get_secret_value(),
-                         settings.database_url.get_secret_value())
+                         settings.database_url.get_secret_value(),
+                         settings.jira_webhook_secret.get_secret_value())
         self._client = httpx.AsyncClient(
             base_url=str(settings.jira_instance_url).rstrip("/"),
             auth=httpx.BasicAuth(settings.jira_user_email, token),
@@ -133,6 +136,103 @@ class JiraClient:
     async def aclose(self) -> None:
         await self._client.aclose()
 
+    async def upload_attachment(
+        self, issue_key: str, filename: str, content: bytes, mime_type: str,
+    ) -> JiraAttachmentResponse:
+        # Un único POST: un timeout puede ocurrir después de que Jira guarde el archivo.
+        try:
+            response = await self._client.post(
+                f"/rest/api/3/issue/{quote(issue_key, safe='')}/attachments",
+                headers={"X-Atlassian-Token": "no-check"},
+                files={"file": (filename, content, mime_type)},
+            )
+        except httpx.RequestError:
+            raise JiraClientError(
+                "No pudimos confirmar la subida. Revisa el ticket en Jira antes de reenviar el archivo."
+            ) from None
+        if response.status_code != 200:
+            raise JiraClientError(f"Jira devolvió HTTP {response.status_code} al subir el archivo.", response.status_code)
+        try:
+            payload = response.json()
+            if not isinstance(payload, list) or len(payload) != 1:
+                raise ValueError
+            attachment = JiraAttachmentResponse.model_validate(payload[0])
+            if attachment.size != len(content) or attachment.filename != filename:
+                raise ValueError
+        except (ValueError, ValidationError):
+            raise JiraClientError(
+                "Jira devolvió una respuesta de adjunto inválida. Revisa el ticket antes de reenviarlo.", 200,
+            ) from None
+        return attachment
+
+    @staticmethod
+    def parse_webhook_event(payload: JiraWebhookPayload) -> WebhookIssue | None:
+        if payload.webhookEvent != "jira:issue_updated":
+            return None
+        return WebhookIssue.model_validate(payload.issue)
+
+    async def download_attachment(self, attachment_id: str) -> bytes:
+        # Construir una ruta fija; nunca enviar Basic Auth a una URL del payload.
+        try:
+            async with self._client.stream(
+                "GET", f"/rest/api/3/attachment/content/{quote(attachment_id, safe='')}",
+                params={"redirect": "false"},
+            ) as response:
+                if response.status_code != 200:
+                    raise JiraClientError("Jira no permitió descargar el adjunto.", response.status_code)
+                content = bytearray()
+                async for chunk in response.aiter_bytes():
+                    content.extend(chunk)
+                    if len(content) > 10 * 1024 * 1024:
+                        raise JiraClientError("Jira devolvió un archivo demasiado grande.", 200)
+                return bytes(content)
+        except httpx.RequestError:
+            raise JiraClientError("No se pudo descargar el adjunto desde Jira.") from None
+
+    @staticmethod
+    def apply_status(solicitud: Solicitud, link: JiraIntegracion, new_state: str,
+                     new_assignee: str | None, now: datetime) -> bool:
+        old_state = solicitud.estado_negocio
+        previous_closed_at = solicitud.closed_at
+        changed = old_state != new_state or solicitud.responsable_jira != new_assignee
+        if changed:
+            solicitud.estado_negocio = new_state
+            solicitud.responsable_jira = new_assignee
+            solicitud.updated_at = now
+        if new_state in TERMINAL_STATES:
+            if old_state != new_state or solicitud.closed_at is None:
+                solicitud.closed_at = now
+        else:
+            solicitud.closed_at = None
+        if not changed and solicitud.closed_at != previous_closed_at:
+            flag_modified(solicitud, "updated_at")
+        link.ultima_sincronizacion_at = now
+        return changed
+
+    async def process_webhook(self, db: AsyncSession, issue: WebhookIssue) -> bool:
+        new_state = normalize_jira_status(issue.fields.status.name)
+        if new_state is None:
+            raise ValueError("El estado de Jira no tiene un mapeo configurado.")
+        solicitud = await db.scalar(
+            select(Solicitud).join(JiraIntegracion, JiraIntegracion.solicitud_id == Solicitud.id)
+            .where(JiraIntegracion.jira_issue_key == issue.key)
+            .options(selectinload(Solicitud.jira_integracion))
+            .execution_options(populate_existing=True).with_for_update(of=Solicitud)
+        )
+        if solicitud is None:
+            return False
+        link = solicitud.jira_integracion
+        assignee = issue.fields.assignee.displayName if issue.fields.assignee else None
+        self.apply_status(solicitud, link, new_state, assignee, datetime.now(timezone.utc))
+        link.estado_integracion = "sincronizado"
+        # Guardar solo el contenido operativo necesario, sin usuario ni secretos del evento.
+        db.add(IntentoIntegracion(
+            solicitud_id=solicitud.id, operacion="SYNC_STATUS", http_status=200,
+            payload_respuesta=self.sanitize(issue.model_dump()),
+        ))
+        await db.commit()
+        return True
+
     async def get_issue_status(self, jira_issue_key: str) -> tuple[JiraSyncResponse, Any]:
         try:
             response = await self._client.get(
@@ -194,22 +294,9 @@ class JiraClient:
         assignee = issue.fields.get("assignee")
         new_assignee = assignee["displayName"] if assignee else None
         old_state = solicitud.estado_negocio
-        previous_closed_at = solicitud.closed_at
-        changed = old_state != new_state or solicitud.responsable_jira != new_assignee
-        now = datetime.now(timezone.utc)
-        if changed:
-            solicitud.estado_negocio = new_state
-            solicitud.responsable_jira = new_assignee
-            solicitud.updated_at = now
-        if new_state in TERMINAL_STATES:
-            if old_state != new_state or solicitud.closed_at is None:
-                solicitud.closed_at = now
-        else:
-            solicitud.closed_at = None
-        if not changed and solicitud.closed_at != previous_closed_at:
-            # Evitar que el onupdate del modelo adelante la fecha al reparar closed_at.
-            flag_modified(solicitud, "updated_at")
-        link.ultima_sincronizacion_at = now
+        changed = self.apply_status(
+            solicitud, link, new_state, new_assignee, datetime.now(timezone.utc),
+        )
         audit.http_status = 200
         audit.payload_respuesta = payload
         db.add(audit)

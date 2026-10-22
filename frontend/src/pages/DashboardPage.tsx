@@ -4,7 +4,6 @@ import {
   AlertTriangle,
   Clock3,
   Layers3,
-  LoaderCircle,
   RefreshCw,
   Target,
 } from "lucide-react";
@@ -14,6 +13,10 @@ import { SyncButton } from "../components/common/SyncButton";
 import { BarChartSimple } from "../components/dashboard/BarChartSimple";
 import { MetricCard } from "../components/dashboard/MetricCard";
 import { StalledAlertCard } from "../components/dashboard/StalledAlertCard";
+
+import { StatusDonutChart } from "../components/dashboard/StatusDonutChart";
+import { AreaBarChart } from "../components/dashboard/AreaBarChart";
+import { MetricSkeleton } from "../components/dashboard/MetricSkeleton";
 
 const TYPE_LABELS: Record<string, string> = {
   incidente: "Incidentes",
@@ -104,73 +107,63 @@ export function DashboardPage() {
           </div>
         </div>
       ) : null}
-      {loading ? (
-        <p className="dashboard-loading" role="status">
-          <LoaderCircle size={17} className="animate-spin" aria-hidden="true" />
-          {metrics ? "Actualizando métricas…" : "Cargando métricas del equipo…"}
-        </p>
-      ) : null}
+      {loading ? <MetricSkeleton /> : null}
       {metrics ? (
         <div className="dashboard-content" aria-busy={loading}>
-          <section className="metric-grid" aria-label="Indicadores de gestión">
-            <MetricCard
-              label="Total Solicitudes"
-              value={metrics.total_solicitudes}
-              caption="Todos los registros del portal"
-              icon={Layers3}
-            />
-            <MetricCard
-              label="Tasa de Resolución"
-              value={`${metrics.tasa_resolucion_pct.toFixed(1)} %`}
-              caption="Solicitudes cerradas sobre el total"
-              icon={Target}
-              progress={metrics.tasa_resolucion_pct}
-            />
-            <MetricCard
-              label="Solicitudes Estancadas"
-              value={metrics.solicitudes_estancadas}
-              caption="Activas sin cambios por más de 5 días"
-              icon={AlertTriangle}
-              warning={metrics.solicitudes_estancadas > 0}
-            />
-            <MetricCard
-              label="Última Sincronización"
-              value={
-                lastSync
-                  ? lastSync.toLocaleTimeString("es-CL", {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })
-                  : "Sin registros"
-              }
-              caption={
-                lastSync
-                  ? lastSync.toLocaleDateString("es-CL", {
-                      dateStyle: "medium",
-                    })
-                  : "Todavía no hay una sincronización registrada"
-              }
-              icon={Clock3}
-            />
-          </section>
+          {!loading ? (
+            <section
+              className="metric-grid"
+              aria-label="Indicadores de gestión"
+            >
+              <MetricCard
+                label="Total Solicitudes"
+                value={metrics.total_solicitudes}
+                caption="Todos los registros del portal"
+                icon={Layers3}
+              />
+              <MetricCard
+                label="Tasa de Resolución"
+                value={`${metrics.tasa_resolucion_pct.toFixed(1)} %`}
+                caption="Solicitudes cerradas sobre el total"
+                icon={Target}
+                progress={metrics.tasa_resolucion_pct}
+              />
+              <MetricCard
+                label="Solicitudes Estancadas"
+                value={metrics.solicitudes_estancadas}
+                caption="Activas sin cambios por más de 5 días"
+                icon={AlertTriangle}
+                warning={metrics.solicitudes_estancadas > 0}
+              />
+              <MetricCard
+                label="Última Sincronización"
+                value={
+                  lastSync
+                    ? lastSync.toLocaleTimeString("es-CL", {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })
+                    : "Sin registros"
+                }
+                caption={
+                  lastSync
+                    ? lastSync.toLocaleDateString("es-CL", {
+                        dateStyle: "medium",
+                      })
+                    : "Todavía no hay una sincronización registrada"
+                }
+                icon={Clock3}
+              />
+            </section>
+          ) : null}
           <StalledAlertCard count={metrics.solicitudes_estancadas} />
           <div className="chart-grid">
-            <BarChartSimple
-              title="Solicitudes por estado"
-              subtitle="Distribución del ciclo de trabajo"
-              items={chartItems(metrics.por_estado)}
-              total={metrics.total_solicitudes}
-            />
+            <StatusDonutChart values={metrics.por_estado} />
+            <AreaBarChart values={metrics.por_area} />
             <BarChartSimple
               title="Incidentes y mejoras"
               subtitle="Tipo de solicitudes registradas"
               items={chartItems(metrics.por_tipo, TYPE_LABELS)}
-              total={metrics.total_solicitudes}
-            />
-            <BarChartSimple
-              title="Solicitudes por área"
-              subtitle="Participación de cada equipo"
-              items={chartItems(metrics.por_area)}
               total={metrics.total_solicitudes}
             />
             <BarChartSimple

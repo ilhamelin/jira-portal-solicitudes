@@ -88,3 +88,13 @@ export interface BulkSyncResponse {
   detalles: SyncResult[];
   timestamp: string;
 }
+
+export interface Adjunto {
+  id: string;
+  solicitud_id: string;
+  nombre_archivo: string;
+  mime_type: string;
+  tamanio_bytes: number;
+  jira_attachment_id: string | null;
+  created_at: string;
+}

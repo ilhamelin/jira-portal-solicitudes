@@ -1,5 +1,6 @@
 import { clearToken, getToken } from "./auth";
 import type {
+  Adjunto,
   AuthResponse,
   BulkSyncResponse,
   DashboardMetrics,
@@ -29,11 +30,13 @@ async function request<T>(
   path: string,
   options: RequestInit = {},
   authenticated = true,
+  responseType: "json" | "blob" = "json",
 ): Promise<T> {
   const token = authenticated ? getToken() : null;
   const headers = new Headers(options.headers);
   headers.set("Accept", "application/json");
-  if (options.body) headers.set("Content-Type", "application/json");
+  if (options.body && !(options.body instanceof FormData))
+    headers.set("Content-Type", "application/json");
   if (token) headers.set("Authorization", `Bearer ${token}`);
   let response: Response;
   try {
@@ -46,7 +49,10 @@ async function request<T>(
       0,
     );
   }
-  const body: unknown = await response.json().catch(() => null);
+  const body: unknown =
+    response.ok && responseType === "blob"
+      ? await response.blob()
+      : await response.json().catch(() => null);
   if (!response.ok) {
     if (response.status === 401 && token) clearToken(token);
     const fields: Record<string, string> = {};
@@ -97,6 +103,26 @@ async function request<T>(
 }
 
 export const api = {
+  uploadAdjunto: (solicitudId: string, file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    return request<Adjunto>(
+      `/solicitudes/${encodeURIComponent(solicitudId)}/adjuntos`,
+      { method: "POST", body },
+    );
+  },
+  getAdjuntos: (solicitudId: string, signal?: AbortSignal) =>
+    request<Adjunto[]>(
+      `/solicitudes/${encodeURIComponent(solicitudId)}/adjuntos`,
+      { signal },
+    ),
+  downloadAdjunto: (solicitudId: string, adjuntoId: string) =>
+    request<Blob>(
+      `/solicitudes/${encodeURIComponent(solicitudId)}/adjuntos/${encodeURIComponent(adjuntoId)}/descarga`,
+      {},
+      true,
+      "blob",
+    ),
   login: (email: string, password: string) =>
     request<AuthResponse>(
       "/auth/login",

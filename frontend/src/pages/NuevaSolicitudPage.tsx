@@ -1,3 +1,8 @@
+import {
+  FileUploadZone,
+  saveFile,
+} from "../components/solicitudes/FileUploadZone";
+import { toast } from "sonner";
 import { useRef, useState, type FormEvent } from "react";
 import {
   AlertTriangle,
@@ -43,6 +48,11 @@ export function NuevaSolicitudPage() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
+  const [files, setFiles] = useState<File[]>([]);
+  const [uploadFailures, setUploadFailures] = useState<
+    { file: File; error: string }[]
+  >([]);
+  const [uploadProgress, setUploadProgress] = useState("");
   const [result, setResult] = useState<Solicitud | null>(null);
   const busy = useRef(false);
   const formRef = useRef<HTMLFormElement>(null);
@@ -81,7 +91,59 @@ export function NuevaSolicitudPage() {
     busy.current = true;
     setPending(true);
     try {
-      setResult(await api.crear(input));
+      const created = await api.crear(input);
+      const key = created.jira_integracion?.jira_issue_key;
+      if (
+        key &&
+        created.jira_integracion?.estado_integracion === "sincronizado"
+      ) {
+        toast.success(`Ticket ${key} creado en Jira`, {
+          description: created.titulo,
+          action: {
+            label: "Abrir en Jira ↗",
+            onClick: () => {
+              window.open(jiraIssueUrl(key), "_blank", "noopener,noreferrer");
+            },
+          },
+        });
+      } else {
+        toast.warning("Solicitud guardada; el envío a Jira no se completó", {
+          description: "Revisa el detalle antes de volver a enviarla.",
+        });
+      }
+      const failures: { file: File; error: string }[] = [];
+      for (const [index, file] of files.entries()) {
+        setUploadProgress(
+          `Enviando archivo ${index + 1} de ${files.length}: ${file.name}`,
+        );
+        if (
+          !key ||
+          created.jira_integracion?.estado_integracion !== "sincronizado"
+        ) {
+          failures.push({
+            file,
+            error: "No se envió porque el ticket de Jira no se pudo crear.",
+          });
+          continue;
+        }
+        try {
+          await api.uploadAdjunto(created.id, file);
+        } catch (failure) {
+          failures.push({ file, error: errorMessage(failure) });
+        }
+      }
+      setUploadFailures(failures);
+      if (failures.length)
+        toast.warning(
+          `${failures.length} archivos no tienen subida confirmada`,
+          {
+            description:
+              "La solicitud está guardada. Revisa Jira antes de reenviar archivos.",
+          },
+        );
+      else if (files.length)
+        toast.success(`${files.length} archivos adjuntos enviados a Jira`);
+      setResult(created);
     } catch (failure) {
       setError(
         failure instanceof ApiError &&
@@ -122,6 +184,38 @@ export function NuevaSolicitudPage() {
           )}
         </p>
         <h2>{result.titulo}</h2>
+        {uploadFailures.length ? (
+          <div
+            className="notice notice-warning attachment-failures"
+            role="alert"
+          >
+            <div>
+              <strong>
+                La solicitud está guardada. Estos archivos no tienen subida
+                confirmada:
+              </strong>
+              <ul>
+                {uploadFailures.map(({ file, error }, index) => (
+                  <li key={index}>
+                    <strong>{file.name}</strong>
+                    <p>{error}</p>
+                    <button
+                      type="button"
+                      className="text-button"
+                      onClick={() => saveFile(file, file.name)}
+                    >
+                      Conservar archivo local
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <p>
+                Revisa el ticket en Jira antes de reenviarlos para evitar
+                duplicados.
+              </p>
+            </div>
+          </div>
+        ) : null}
         <div className="success-actions">
           <Link
             className="button button-primary"
@@ -173,7 +267,7 @@ export function NuevaSolicitudPage() {
               Información de la solicitud
             </h2>
             <span className="helper-text">
-              Todos los campos son obligatorios
+              Los archivos adjuntos son opcionales
             </span>
           </div>
           <form ref={formRef} onSubmit={submit} noValidate aria-busy={pending}>
@@ -319,6 +413,11 @@ export function NuevaSolicitudPage() {
                     "Incluye el contexto y los pasos necesarios. Mínimo 10 caracteres."}
                 </span>
               </div>
+              <FileUploadZone
+                files={files}
+                onChange={setFiles}
+                disabled={pending}
+              />
             </fieldset>
             {pending ? (
               <div className="notice notice-info" role="status">
@@ -327,7 +426,10 @@ export function NuevaSolicitudPage() {
                   className="animate-spin shrink-0"
                   aria-hidden="true"
                 />
-                Registrando en base de datos y creando ticket en Jira Cloud...
+                <span className="upload-progress">
+                  {uploadProgress ||
+                    "Registrando en base de datos y creando ticket en Jira Cloud..."}
+                </span>
               </div>
             ) : null}
             <div className="form-actions">
@@ -344,7 +446,11 @@ export function NuevaSolicitudPage() {
                 ) : (
                   <Send size={17} aria-hidden="true" />
                 )}
-                {pending ? "Registrando…" : "Registrar solicitud"}
+                {pending
+                  ? uploadProgress
+                    ? "Enviando archivos…"
+                    : "Registrando…"
+                  : "Registrar solicitud"}
               </button>
             </div>
           </form>

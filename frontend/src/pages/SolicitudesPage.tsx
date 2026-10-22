@@ -1,3 +1,4 @@
+import { SkeletonTable } from "../components/common/SkeletonTable";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
@@ -220,15 +221,7 @@ export function SolicitudesPage() {
           </div>
         ) : null}
         {isLoading ? (
-          <div className="empty-state" role="status">
-            <LoaderCircle
-              size={29}
-              className="animate-spin"
-              aria-hidden="true"
-            />
-            <h2>Cargando solicitudes</h2>
-            <p>Estamos consultando tus registros.</p>
-          </div>
+          <SkeletonTable />
         ) : items.length === 0 && !error ? (
           <div className="empty-state">
             <span className="empty-icon">

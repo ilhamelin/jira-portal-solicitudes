@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, CheckCircle2, RefreshCw, X } from "lucide-react";
-import { api, errorMessage } from "../../services/api";
+import { RefreshCw } from "lucide-react";
+import { toast } from "sonner";
+import { api, errorMessage, jiraIssueUrl } from "../../services/api";
 
 export function SyncButton({
   solicitudId,
@@ -14,10 +15,6 @@ export function SyncButton({
   label?: string;
 }) {
   const [pending, setPending] = useState(false);
-  const [notice, setNotice] = useState<{
-    message: string;
-    warning: boolean;
-  } | null>(null);
   const busy = useRef(false);
   const active = useRef(true);
   useEffect(() => {
@@ -26,41 +23,49 @@ export function SyncButton({
       active.current = false;
     };
   }, []);
-  useEffect(() => {
-    if (!notice) return;
-    const timer = window.setTimeout(() => setNotice(null), 9000);
-    return () => window.clearTimeout(timer);
-  }, [notice]);
-
   async function sync() {
     if (busy.current) return;
     busy.current = true;
     setPending(true);
-    setNotice(null);
     try {
       if (solicitudId) {
         const result = await api.syncSolicitud(solicitudId);
-        if (active.current)
-          setNotice({
-            message: `Sincronización completada: ${result.hubo_cambios ? 1 : 0} tickets actualizados`,
-            warning: false,
-          });
+        toast.info(
+          `Sincronización completada: ${result.hubo_cambios ? 1 : 0} tickets actualizados`,
+          {
+            action: {
+              label: "Abrir en Jira ↗",
+              onClick: () => {
+                window.open(
+                  jiraIssueUrl(result.jira_issue_key),
+                  "_blank",
+                  "noopener,noreferrer",
+                );
+              },
+            },
+          },
+        );
       } else {
         const result = await api.syncAllJira();
         const failed = result.total_revisadas - result.detalles.length;
-        if (active.current)
-          setNotice({
-            message:
-              failed > 0
-                ? `Sincronización parcial: ${result.total_actualizadas} tickets actualizados; ${failed} no se pudieron consultar. Revisa la trazabilidad.`
-                : `Sincronización completada: ${result.total_actualizadas} tickets actualizados`,
-            warning: failed > 0,
-          });
+        if (failed > 0) {
+          toast.warning(
+            `Sincronización parcial: ${result.total_actualizadas} tickets actualizados`,
+            {
+              description: `${failed} no se pudieron consultar. Revisa la trazabilidad.`,
+            },
+          );
+        } else {
+          toast.info(
+            `Sincronización completada: ${result.total_actualizadas} tickets actualizados`,
+          );
+        }
       }
       if (active.current) onSynced();
     } catch (error) {
-      if (active.current)
-        setNotice({ message: errorMessage(error), warning: true });
+      toast.error("No se pudo sincronizar con Jira", {
+        description: errorMessage(error),
+      });
     } finally {
       busy.current = false;
       if (active.current) setPending(false);
@@ -82,26 +87,6 @@ export function SyncButton({
         />
         {pending ? "Sincronizando…" : label}
       </button>
-      {notice ? (
-        <div
-          className={`sync-toast ${notice.warning ? "sync-toast-warning" : ""}`}
-          role={notice.warning ? "alert" : "status"}
-        >
-          {notice.warning ? (
-            <AlertTriangle size={19} aria-hidden="true" />
-          ) : (
-            <CheckCircle2 size={19} aria-hidden="true" />
-          )}
-          <p>{notice.message}</p>
-          <button
-            type="button"
-            onClick={() => setNotice(null)}
-            aria-label="Cerrar notificación"
-          >
-            <X size={17} />
-          </button>
-        </div>
-      ) : null}
     </>
   );
 }

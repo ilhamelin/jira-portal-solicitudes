@@ -1,3 +1,4 @@
+import { AdjuntosList } from "../components/solicitudes/AdjuntosList";
 import { useEffect, useState } from "react";
 import {
   AlertCircle,
@@ -231,6 +232,7 @@ export function DetalleSolicitudPage() {
           ) : null}
         </aside>
       </div>
+      <AdjuntosList key={item.id} solicitudId={item.id} revision={revision} />
       <details className="panel audit-panel">
         <summary>
           <span className="audit-heading">

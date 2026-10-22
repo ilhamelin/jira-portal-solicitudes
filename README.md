@@ -5,7 +5,7 @@
 [![TailwindCSS](https://img.shields.io/badge/Styles-Tailwind%20CSS-38B2AC?logo=tailwind-css&logoColor=white)](https://tailwindcss.com/)
 [![Supabase](https://img.shields.io/badge/Database-Supabase%20PostgreSQL-3ECF8E?logo=supabase&logoColor=white)](https://supabase.com/)
 [![Jira](https://img.shields.io/badge/Issue%20Tracker-Jira%20Cloud%20REST%20v3-0052CC?logo=jira&logoColor=white)](https://www.atlassian.com/software/jira)
-[![Tests](https://img.shields.io/badge/Tests-123%20Passed-brightgreen?logo=pytest)](https://docs.pytest.org/)
+[![Tests](https://img.shields.io/badge/Tests-181%20Passed-brightgreen?logo=pytest)](https://docs.pytest.org/)
 
 Solución empresarial diseñada para gestionar el ciclo de vida de incidentes y mejoras técnicas. Permite a los colaboradores registrar requerimientos desde un portal web moderno, sincroniza automáticamente el trabajo con **Jira Cloud** (mediante su REST API v3) y provee un **Dashboard de Gestión** analítico para la coordinación de TI.
 
@@ -70,7 +70,7 @@ flowchart TD
 
 ```text
 jira-portal-solicitudes/
-├── .codex/                     # Especificaciones técnicas (SPEC-001 a SPEC-005) y reglas
+├── .codex/                     # Especificaciones técnicas (SPEC-001 a SPEC-007) y reglas
 ├── backend/                    # API REST asíncrona en Python
 │   ├── app/
 │   │   ├── api/v1/             # Endpoints (auth, solicitudes, jira, dashboard)
@@ -79,7 +79,7 @@ jira-portal-solicitudes/
 │   │   ├── schemas/            # Contratos de datos Pydantic v2
 │   │   └── services/           # Clientes HTTP asíncronos y lógica analítica
 │   ├── migrations/             # Scripts SQL idempotentes para Supabase
-│   ├── tests/                  # Suite de 123 pruebas unitarias y de integración
+│   ├── tests/                  # Suite de 181 pruebas unitarias y de integración
 │   ├── requirements.txt
 │   └── Dockerfile
 ├── frontend/                   # Single Page Application (SPA)
@@ -134,12 +134,12 @@ npm run dev
 
 ## 🧪 Pruebas Automatizadas
 
-El proyecto incluye **123 pruebas unitarias y de integración** con `pytest` que cubren contratos de datos, roles, fallos de red simulados, formatos ADF y agregaciones del dashboard:
+El proyecto incluye **181 pruebas unitarias y de integración** con `pytest` que cubren contratos de datos, roles, fallos de red simulados, formatos ADF y agregaciones del dashboard:
 
 ```bash
 cd backend
 pytest -v
-# ============================ 123 passed in 16.86s =============================
+# La suite incluye /health público, independiente de Jira y de la base de datos.
 ```
 
 ---
@@ -158,3 +158,62 @@ pytest -v
 * **Frontend (En vivo en Vercel):** [https://portal-solicitudes-jira.vercel.app](https://portal-solicitudes-jira.vercel.app)
 * **Base de Datos:** PostgreSQL gestionado en **Supabase Cloud** con connection pooler (`6543`) y políticas de seguridad RLS.
 * **Integración:** Jira Software Cloud REST API v3 ([portal-solicitudes-dev.atlassian.net](https://portal-solicitudes-dev.atlassian.net)) con autenticación basada en API Tokens seguros.
+
+
+### Preparación del backend para Render
+
+El manifiesto `render.yaml` define el servicio Docker y su comprobación pública
+`GET /health`. Usa `backend/` como contexto de construcción, conforme a las rutas
+`COPY` del Dockerfile. El endpoint devuelve el entorno configurado en `ENVIRONMENT`
+(`production` en Render) y comprueba que la aplicación responde; no consulta
+PostgreSQL ni Jira.
+
+Al crear el servicio, configura `DATABASE_URL`, `JIRA_INSTANCE_URL`,
+`JIRA_USER_EMAIL` y `JIRA_API_TOKEN` como secretos en Render. El manifiesto genera
+`JWT_SECRET_KEY` y permite el origen público de Vercel y `http://localhost:5173`;
+ajusta `ALLOWED_ORIGINS` si cambia la URL del frontend. Después de desplegar el
+backend, configura `VITE_API_URL=https://<servicio>.onrender.com/api/v1` en Vercel
+y vuelve a compilar el frontend. Añadir el manifiesto no despliega el servicio.
+
+### Mejoras de interfaz (SPEC-006)
+
+El Dashboard incorpora gráficos de dona por estado y barras por área con Recharts,
+con leyendas y datos accesibles. Las cargas de solicitudes e indicadores usan
+skeletons. Sonner muestra los resultados de creación y sincronización, incluidos
+los fallos parciales; las notificaciones de un ticket incluyen un botón a Jira.
+El selector Sol/Luna del Navbar guarda la preferencia en `localStorage.theme` y,
+si no hay una preferencia guardada, sigue el tema del sistema.
+
+Las versiones instaladas conforme a la especificación son Sonner 1.7.4 y Recharts
+2.15.4. npm señala que la rama 2 de Recharts dejó de mantenerse; una actualización
+a v3 requiere revisar la compatibilidad en un incremento posterior.
+
+
+### Webhooks y adjuntos (SPEC-007)
+
+- El webhook `POST /api/v1/webhooks/jira` recibe eventos `jira:issue_updated` y
+  actualiza estado, responsable, fechas y auditoría en una sola transacción.
+  Configura `JIRA_WEBHOOK_SECRET` en el backend y en el emisor, mediante la
+  cabecera `X-Webhook-Secret` o `?token=...`. Prefiere la cabecera cuando sea
+  posible; si usas query, configura la redacción de tokens en los logs del proxy.
+  Sin secreto configurado se rechazan los eventos. El navegador muestra los
+  nuevos datos al volver a consultar la solicitud; no se añaden WebSockets.
+- El formulario admite selección o arrastre de PNG, JPEG, PDF y TXT, hasta
+  10 MiB por archivo, con previews de imágenes. Después de crear el ticket,
+  envía los archivos a Jira en multipart, sin reintentos automáticos. Un fallo
+  conserva la solicitud y permite recuperar localmente los archivos no confirmados.
+- Los endpoints `GET/POST /api/v1/solicitudes/{id}/adjuntos` y
+  `GET /api/v1/solicitudes/{id}/adjuntos/{adjunto_id}/descarga` requieren JWT y
+  permisos del autor o coordinador. Las descargas pasan por FastAPI; Jira conserva
+  los binarios y PostgreSQL los metadatos.
+
+Antes de usar adjuntos en un entorno existente, aplica manualmente
+`backend/migrations/002_add_adjuntos_table.sql` después de `001_initial_schema.sql`
+con la conexión autorizada para migraciones. La migración y el registro del
+webhook en Jira **no se ejecutaron contra servicios reales** durante estas pruebas.
+El manifiesto de Render incluye el nuevo secreto externo.
+
+Los errores, permisos y límites complementarios están documentados en
+[Contratos de SPEC-007](docs/SPEC-007-contratos-complementarios.md). La comprobación
+multipart y los eventos se prueban con dobles HTTP y SQLite; la subida a un ticket
+real y la latencia de Supabase quedan pendientes de validación en el entorno cloud.

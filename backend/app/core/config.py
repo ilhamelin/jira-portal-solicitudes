@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     jira_user_email: str = Field(min_length=1)
     jira_api_token: SecretStr = Field(min_length=1)
     jira_project_key: str = "SOL"
+    jira_webhook_secret: SecretStr = SecretStr("")
     allowed_origins: str = "http://localhost:5173"
     environment: str = "development"
 

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import {
   BrowserRouter,
   Navigate,
@@ -14,7 +14,14 @@ import { LoginPage } from "./pages/LoginPage";
 import { SolicitudesPage } from "./pages/SolicitudesPage";
 import { NuevaSolicitudPage } from "./pages/NuevaSolicitudPage";
 import { DetalleSolicitudPage } from "./pages/DetalleSolicitudPage";
-import { DashboardPage } from "./pages/DashboardPage";
+import { Toaster } from "sonner";
+import { useTheme } from "./context/ThemeContext";
+import { MetricSkeleton } from "./components/dashboard/MetricSkeleton";
+const DashboardPage = lazy(() =>
+  import("./pages/DashboardPage").then((module) => ({
+    default: module.DashboardPage,
+  })),
+);
 
 function Workspace() {
   const { pathname } = useLocation();
@@ -39,15 +46,24 @@ function Workspace() {
 }
 
 export function App() {
+  const { theme } = useTheme();
   return (
     <BrowserRouter>
       <AuthProvider>
+        <Toaster position="top-right" richColors closeButton theme={theme} />
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route element={<ProtectedRoute />}>
             <Route element={<Workspace />}>
               <Route element={<ProtectedRoute roles={["coordinador"]} />}>
-                <Route path="/dashboard" element={<DashboardPage />} />
+                <Route
+                  path="/dashboard"
+                  element={
+                    <Suspense fallback={<MetricSkeleton />}>
+                      <DashboardPage />
+                    </Suspense>
+                  }
+                />
               </Route>
               <Route path="/solicitudes" element={<SolicitudesPage />} />
               <Route

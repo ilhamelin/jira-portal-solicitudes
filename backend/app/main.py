@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
-from .api.v1 import auth, dashboard, jira, solicitudes
+from .api.v1 import auth, dashboard, jira, solicitudes, webhooks
 from .core.config import Settings, get_settings
 from .core.database import build_engine
 from .services.jira_client import JiraClient
@@ -32,15 +32,36 @@ def create_app(settings: Settings | None = None, *, engine: AsyncEngine | None =
     application.state.engine = engine
     application.state.session_factory = async_sessionmaker(engine, expire_on_commit=False)
     application.state.jira_client = jira_client
+
+    @application.get("/health", tags=["health"])
+    async def health() -> dict[str, str]:
+        # Liveness público: no depende de PostgreSQL ni de Jira.
+        return {
+            "status": "healthy",
+            "service": "jira-portal-backend",
+            "environment": settings.environment,
+        }
+
+    # Soporte para Chrome Private Network Access (PNA) desde Vercel hacia localhost
+    @application.middleware("http")
+    async def add_private_network_header(request, call_next):
+        response = await call_next(request)
+        if request.headers.get("access-control-request-private-network") == "true":
+            response.headers["Access-Control-Allow-Private-Network"] = "true"
+        return response
+
     application.add_middleware(
-        CORSMiddleware, allow_origins=settings.cors_origins,
-        allow_credentials=True, allow_methods=["GET", "POST"],
-        allow_headers=["Authorization", "Content-Type"],
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
     application.include_router(auth.router, prefix="/api/v1")
     application.include_router(solicitudes.router, prefix="/api/v1")
     application.include_router(jira.router, prefix="/api/v1")
     application.include_router(dashboard.router, prefix="/api/v1")
+    application.include_router(webhooks.router, prefix="/api/v1")
     return application
 
 

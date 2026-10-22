@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: jira-portal-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    # El Dockerfile copia requirements.txt y app/ relativos a backend/.
+    dockerContext: ./backend
+    plan: free
+    region: oregon
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: "8000"
+      - key: DATABASE_URL
+        sync: false
+      - key: JIRA_INSTANCE_URL
+        sync: false
+      - key: JIRA_USER_EMAIL
+        sync: false
+      - key: JIRA_API_TOKEN
+        sync: false
+      - key: JIRA_WEBHOOK_SECRET
+        sync: false
+      - key: JIRA_PROJECT_KEY
+        value: SOL
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: ALLOWED_ORIGINS
+        value: https://portal-solicitudes-jira.vercel.app,http://localhost:5173
+      - key: ENVIRONMENT
+        value: production

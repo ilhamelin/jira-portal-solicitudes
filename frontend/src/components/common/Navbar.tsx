@@ -8,6 +8,8 @@ import {
 import { Link, NavLink } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 
+import { ThemeToggle } from "./ThemeToggle";
+
 export function Navbar() {
   const { user, logout } = useAuth();
   return (
@@ -38,6 +40,7 @@ export function Navbar() {
           ) : null}
         </nav>
         <div className="user-menu">
+          <ThemeToggle />
           <span className="avatar" aria-hidden="true">
             {user?.nombre.trim().charAt(0).toUpperCase()}
           </span>
